@@ -20,7 +20,7 @@
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
   h1 { font-size: 15px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
        color: var(--muted); margin: 0 0 14px; }
-  .stage { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
+  .stage { position: relative; aspect-ratio: 1/1; max-width: 520px; margin: 0 auto; background: #000; border-radius: 10px; overflow: hidden; }
   .stage video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
   .timer {
     position: absolute; left: 12px; top: 12px; padding: 6px 12px; border-radius: 8px;
@@ -45,7 +45,13 @@
   #rec.stop { background: #2a2f38; border-color: var(--accent); color: var(--accent); }
   label.chk { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; }
   @media (max-width: 820px) { main { padding: 12px; gap: 12px; } .panel { padding: 14px; } .topic { font-size: 30px !important; } section.panel:last-child { order: -1; } }
-  .topic { font-size: 40px; font-weight: 700; line-height: 1.15; margin: 4px 0 18px; }
+  .topic { font-size: 40px; font-weight: 700; line-height: 1.15; margin: 4px 0 18px; width: 100%; text-align: left;
+           background: none; border: 0; padding: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .topic:hover { background: none; }
+  .chev { font-size: 22px; color: var(--muted); transition: transform .15s; }
+  .collapsed .chev { transform: rotate(-90deg); }
+  .collapsed .topic { margin-bottom: 0; }
+  .collapsed #details { display: none; }
   .steps { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
   .steps li { background: #23272e; border-radius: 8px; padding: 10px 12px; }
   .steps b { display: block; }
@@ -83,12 +89,14 @@
 
   <section class="panel">
     <h1>Ämne</h1>
-    <div class="topic" id="topic">…</div>
+    <button class="topic" id="topicBtn" aria-expanded="true"><span id="topic">…</span><span class="chev" aria-hidden="true">▾</span></button>
+    <div id="details">
     <div class="controls" style="margin-top:0">
       <button id="next">Nytt ämne</button>
       <select id="framework" aria-label="Modell"></select>
     </div>
     <ul class="steps" id="steps"></ul>
+    </div>
   </section>
 </main>
 
@@ -139,7 +147,7 @@ function bump() { const c = store.get("counts", {}); c[today()] = (c[today()] ||
 async function initCamera() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 30 } }, audio: true });
+      video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 720 }, aspectRatio: { ideal: 1 }, frameRate: { ideal: 30 } }, audio: true });
     $("preview").srcObject = stream;
     setStatus("Redo.");
   } catch (e) {
@@ -262,6 +270,12 @@ $("framework").innerHTML = Object.keys(FRAMEWORKS).map(k => `<option>${k}</optio
 $("framework").value = FRAMEWORKS[store.get("fw", "1-2-3")] ? store.get("fw", "1-2-3") : "1-2-3";
 $("framework").onchange = renderSteps;
 $("next").onclick = newTopic;
+$("prep").checked = store.get("prep", true);
+$("prep").onchange = () => store.set("prep", $("prep").checked);
+const topicPanel = $("topicBtn").closest(".panel");
+function setCollapsed(c) { topicPanel.classList.toggle("collapsed", c); $("topicBtn").setAttribute("aria-expanded", String(!c)); store.set("collapsed", c); }
+$("topicBtn").onclick = () => setCollapsed(!topicPanel.classList.contains("collapsed"));
+setCollapsed(store.get("collapsed", false));
 $("pick").onclick = pickFolder;
 $("rec").onclick = () => {
   if (state === "idle") { $("prep").checked ? startPrep() : startRec(); }
