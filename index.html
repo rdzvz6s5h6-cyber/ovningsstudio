@@ -16,7 +16,7 @@
   }
   main { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; gap: 20px;
          grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
-  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  @media (max-width: 820px) { main { grid-template-columns: minmax(0, 1fr); } }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
   h1 { font-size: 15px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
        color: var(--muted); margin: 0 0 14px; }
@@ -93,14 +93,10 @@
     <div class="controls">
       <button id="rec">● Rec</button>
       <label class="chk"><input type="checkbox" id="prep"> 10 s betänketid</label>
-      <label class="chk" id="ccLabel"><input type="checkbox" id="cc" checked> Undertexter</label>
+      <label class="chk" id="ccLabel"><input type="checkbox" id="cc" checked> Spara text</label>
       <span class="count" id="count"></span>
     </div>
     <div class="status" id="status">Startar kameran…</div>
-    <div class="folder" id="folderRow">
-      Sparas i: <b id="folderName">ingen mapp vald</b>
-      <button id="pick" style="margin-left:8px;padding:6px 12px">Välj mapp</button>
-    </div>
   </section>
 
   <section class="panel">
@@ -112,6 +108,14 @@
       <select id="framework" aria-label="Modell"></select>
     </div>
     <ul class="steps" id="steps"></ul>
+    </div>
+  </section>
+  <section class="panel wide">
+    <h1>Spara</h1>
+    <div class="status" id="save" style="margin-top:0">Inget klipp att spara än.</div>
+    <div class="folder" id="folderRow">
+      Sparas i: <b id="folderName">ingen mapp vald</b>
+      <button id="pick" style="margin-left:8px;padding:6px 12px">Välj mapp</button>
     </div>
   </section>
   <section class="panel wide">
@@ -151,6 +155,7 @@ let stream, recorder, chunks = [], state = "idle", tick, t0, dirHandle, currentT
 const urls = {};
 
 function setStatus(msg, cls = "") { const s = $("status"); s.className = "status " + cls; s.innerHTML = msg; }
+function setSave(msg, cls = "") { const s = $("save"); s.className = "status " + cls; s.innerHTML = msg; }
 function fmt(s) { return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"); }
 
 function newTopic() {
@@ -212,10 +217,9 @@ function startCaptions() {
       let fin = "", interim = "";
       for (const r of e.results) (r.isFinal ? (fin += r[0].transcript + " ") : (interim += r[0].transcript));
       finalText = (base + fin).trim();
-      setCaption((finalText + " " + interim).trim().slice(-90));
     };
     recog.onend = () => { if (state === "rec") { base = finalText + " "; try { recog.start(); } catch {} } };
-    recog.onerror = e => { if (e.error === "not-allowed" || e.error === "service-not-allowed") { recog.onend = null; setCaption("Undertexter är inte tillåtna i den här webbläsaren."); } };
+    recog.onerror = e => { if (e.error === "not-allowed" || e.error === "service-not-allowed") { recog.onend = null; } };
     recog.start();
   } catch { recog = null; }
 }
@@ -278,21 +282,22 @@ async function finish() {
       const fh = await dirHandle.getFileHandle(name, { create: true });
       const w = await fh.createWritable(); await w.write(blob); await w.close();
       saved = true;
-      setStatus(`Sparad: ${name} (${mb} MB)`, "ok");
-    } catch (e) { setStatus("Kunde inte spara i mappen (" + e.name + "). ", "err"); }
+      setSave(`Sparad: ${name} (${mb} MB)`, "ok");
+    } catch (e) { setSave("Kunde inte spara i mappen (" + e.name + "). ", "err"); }
   }
   if (!saved) {
-    const s = $("status"); if (!dirHandle) setStatus("Ingen mapp vald. ", "");
+    const s = $("save"); if (!dirHandle) setSave("Ingen mapp vald. ", "");
     const a = document.createElement("a"); a.href = lastUrl; a.download = name; a.className = "dl";
     a.textContent = `Ladda ner ${name} (${mb} MB)`;
     const file = new File([blob], name, { type: type.split(";")[0] });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      setStatus(`Klart: ${name} (${mb} MB). `, "ok");
+      setSave(`Klart: ${name} (${mb} MB). `, "ok");
       const b = document.createElement("button"); b.textContent = "Spara i Filer / dela"; b.style.marginLeft = "4px";
       b.onclick = async () => { try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== "AbortError") { s.appendChild(document.createTextNode(" ")); s.appendChild(a); } } };
       s.appendChild(b);
     } else s.appendChild(a);
   }
+  setStatus("Redo.");
   bump(); newTopic();
 }
 
@@ -321,14 +326,14 @@ async function idbGet(k) { try { const db = await idb(); return await new Promis
   r.onsuccess = () => res(r.result); r.onerror = () => res(null); }); } catch { return null; } }
 
 async function pickFolder() {
-  if (!window.showDirectoryPicker) { setStatus("Den här webbläsaren kan inte spara direkt i en mapp. Använd Chrome, annars laddas klippen ner.", "err"); return; }
+  if (!window.showDirectoryPicker) { setSave("Den här webbläsaren kan inte spara direkt i en mapp. Använd Chrome, annars laddas klippen ner.", "err"); return; }
   try {
     // Finns en sparad mapp som bara saknar behörighet: fråga om den först.
     const stored = await idbGet("dir");
     if (stored && !dirHandle && await stored.requestPermission({ mode: "readwrite" }) === "granted") { useFolder(stored); return; }
     const h = await window.showDirectoryPicker({ mode: "readwrite" });
     await idbSet("dir", h); useFolder(h);
-  } catch (e) { if (e.name !== "AbortError") setStatus("Mappen kunde inte väljas: " + e.name, "err"); }
+  } catch (e) { if (e.name !== "AbortError") setSave("Mappen kunde inte väljas: " + e.name, "err"); }
 }
 function useFolder(h) { dirHandle = h; $("folderName").textContent = h.name; $("pick").textContent = "Byt mapp"; }
 async function restoreFolder() {
