@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Övningsstudio</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --line: #2c313a; --text: #eef0f3;
+    --muted: #9aa3b0; --accent: #ff4d4d; --ok: #5fd08a; --warn: #f2c14e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; gap: 20px;
+         grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+       color: var(--muted); margin: 0 0 14px; }
+  .stage { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
+  .stage video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  .timer {
+    position: absolute; left: 12px; top: 12px; padding: 6px 12px; border-radius: 8px;
+    background: rgba(0,0,0,.6); font: 600 28px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .timer.rec { color: var(--accent); }
+  .timer.prep { color: var(--warn); }
+  .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--accent);
+         margin-right: 8px; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 12px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+  button, select {
+    font: inherit; color: var(--text); background: #2a2f38; border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 16px; cursor: pointer;
+  }
+  button:hover { background: #343a45; }
+  button:disabled { opacity: .45; cursor: default; }
+  #rec { background: var(--accent); border-color: var(--accent); font-weight: 700; padding: 12px 26px; }
+  #rec.stop { background: #2a2f38; border-color: var(--accent); color: var(--accent); }
+  label.chk { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; }
+  @media (max-width: 820px) { main { padding: 12px; gap: 12px; } .panel { padding: 14px; } .topic { font-size: 30px !important; } section.panel:last-child { order: -1; } }
+  .topic { font-size: 40px; font-weight: 700; line-height: 1.15; margin: 4px 0 18px; }
+  .steps { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .steps li { background: #23272e; border-radius: 8px; padding: 10px 12px; }
+  .steps b { display: block; }
+  .steps span { color: var(--muted); font-size: 14px; }
+  .status { margin-top: 14px; font-size: 14px; color: var(--muted); min-height: 1.4em; word-break: break-word; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--accent); }
+  .folder { font-size: 14px; color: var(--muted); margin-top: 10px; }
+  .folder b { color: var(--text); }
+  #last { width: 100%; margin-top: 12px; border-radius: 8px; display: none; }
+  .count { font-size: 14px; color: var(--muted); margin-left: auto; }
+  a.dl { color: var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <section class="panel">
+    <h1>Inspelning</h1>
+    <div class="stage">
+      <video id="preview" autoplay muted playsinline></video>
+      <div class="timer" id="timer">0:00 / 1:00</div>
+    </div>
+    <div class="bar"><div id="progress"></div></div>
+    <div class="controls">
+      <button id="rec">● Rec</button>
+      <label class="chk"><input type="checkbox" id="prep" checked> 30 s betänketid</label>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="status" id="status">Startar kameran…</div>
+    <div class="folder" id="folderRow">
+      Sparas i: <b id="folderName">ingen mapp vald</b>
+      <button id="pick" style="margin-left:8px;padding:6px 12px">Välj mapp</button>
+    </div>
+    <video id="last" controls playsinline></video>
+  </section>
+
+  <section class="panel">
+    <h1>Ämne</h1>
+    <div class="topic" id="topic">…</div>
+    <div class="controls" style="margin-top:0">
+      <button id="next">Nytt ämne</button>
+      <select id="framework" aria-label="Modell"></select>
+    </div>
+    <ul class="steps" id="steps"></ul>
+  </section>
+</main>
+
+<script>
+const LIMIT = 60, PREP = 30;
+
+const TOPICS = ["Kollektivtrafik","Kaffe","Måndagar","Att flytta hemifrån","Möten","Sömn","Semester","Matlådor",
+"Mobiltelefoner","Att läsa böcker","Träning","Grannar","Väder","Att laga mat","Pengar","Barndomens somrar",
+"Distansarbete","Cykling","Att lära sig ett språk","Husdjur","Musik","Städning","Att ge feedback","Tålamod",
+"Sociala medier","Att säga nej","Vinter","Frukost","Bilkörning","Att resa ensam","Vänskap","Deadlines",
+"Trädgård","Podcasts","Att vara nybörjare","Köer","Presenter","E-post","Morgonrutiner","Nyheter","Att be om hjälp",
+"Film","Kontorslandskap","Promenader","Att misslyckas","Streamingtjänster","Bibliotek","Snabbmat","Att vänta",
+"Hantverk","Jobbintervjuer","Tystnad","Att fira födelsedag","Återvinning","Fotboll","Kalendern","Att packa en väska",
+"Småprat","AI","Att hålla tal","Second hand","Fika","Stress","Lördagsgodis","Att byta jobb","Skogen",
+"Vanor","Hemmakontor","Tandläkaren","Att ha fel","Brädspel","Midsommar","Löpning","Att lyssna"];
+
+const FRAMEWORKS = {
+  "1-2-3": [["En sak","Det viktigaste du vill att lyssnaren ska veta"],["Två typer","Dela upp ämnet i två slag"],["Tre steg","Hur man gör, i tre steg"]],
+  "PARA": [["Point","Din poäng"],["Action","Vad du gjorde"],["Result","Vad det ledde till"],["Ask","En fråga till lyssnaren"]],
+  "PREP": [["Point","Din poäng"],["Reason","Varför"],["Example","Ett konkret exempel"],["Point","Poängen igen"]]
+};
+
+const $ = id => document.getElementById(id);
+const store = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+
+let stream, recorder, chunks = [], state = "idle", tick, t0, dirHandle, lastUrl, currentTopic;
+
+function setStatus(msg, cls = "") { const s = $("status"); s.className = "status " + cls; s.innerHTML = msg; }
+function fmt(s) { return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"); }
+
+function newTopic() {
+  let t; do { t = TOPICS[Math.floor(Math.random() * TOPICS.length)]; } while (t === currentTopic);
+  currentTopic = t; $("topic").textContent = t;
+}
+function renderSteps() {
+  const f = $("framework").value; store.set("fw", f);
+  $("steps").innerHTML = FRAMEWORKS[f].map(([a, b]) => `<li><b>${a}</b><span>${b}</span></li>`).join("");
+}
+function today() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
+function showCount() {
+  const c = store.get("counts", {}); const total = Object.values(c).reduce((a, b) => a + b, 0);
+  $("count").textContent = `Idag: ${c[today()] || 0} · Totalt: ${total}`;
+}
+function bump() { const c = store.get("counts", {}); c[today()] = (c[today()] || 0) + 1; store.set("counts", c); showCount(); }
+
+// ---- Kamera ----
+async function initCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 540 }, frameRate: { ideal: 30 } }, audio: true });
+    $("preview").srcObject = stream;
+    setStatus("Redo.");
+  } catch (e) {
+    $("rec").disabled = true;
+    setStatus("Kameran eller mikrofonen kunde inte startas (" + e.name + "). Tillåt åtkomst i webbläsaren och ladda om.", "err");
+  }
+}
+function pickMime() {
+  const c = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  return c.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+}
+
+// ---- Inspelning ----
+function startPrep() {
+  state = "prep"; t0 = Date.now();
+  $("rec").textContent = "Avbryt"; $("rec").classList.add("stop");
+  $("timer").className = "timer prep";
+  setStatus("Betänketid. Tänk igenom strukturen.");
+  tick = setInterval(() => {
+    const left = PREP - (Date.now() - t0) / 1000;
+    $("timer").textContent = "Start om " + Math.max(0, Math.ceil(left));
+    if (left <= 0) { clearInterval(tick); startRec(); }
+  }, 100);
+}
+function startRec() {
+  const mime = pickMime();
+  try {
+    recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: 800000, audioBitsPerSecond: 64000 });
+  } catch (e) { reset(); setStatus("Inspelningen kunde inte startas: " + e.message, "err"); return; }
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = finish;
+  recorder.start(1000);
+  state = "rec"; t0 = Date.now();
+  $("rec").textContent = "■ Stopp"; $("rec").classList.add("stop");
+  $("timer").className = "timer rec";
+  setStatus("Spelar in.");
+  tick = setInterval(() => {
+    const s = (Date.now() - t0) / 1000;
+    $("timer").innerHTML = '<span class="dot"></span>' + fmt(s) + " / " + fmt(LIMIT);
+    $("progress").style.width = Math.min(100, s / LIMIT * 100) + "%";
+    if (s >= LIMIT) stopRec();
+  }, 100);
+}
+function stopRec() { clearInterval(tick); if (recorder && recorder.state !== "inactive") recorder.stop(); }
+function reset() {
+  clearInterval(tick); state = "idle";
+  $("rec").textContent = "● Rec"; $("rec").classList.remove("stop");
+  $("timer").className = "timer"; $("timer").textContent = "0:00 / " + fmt(LIMIT);
+  $("progress").style.width = "0";
+}
+function slug(s) {
+  return s.toLowerCase().replace(/[åä]/g, "a").replace(/ö/g, "o").replace(/é/g, "e").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+async function finish() {
+  const type = recorder.mimeType || "video/webm";
+  const blob = new Blob(chunks, { type });
+  const ext = type.includes("mp4") ? "mp4" : "webm";
+  const d = new Date();
+  const name = `${today()}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}${String(d.getSeconds()).padStart(2,"0")}_${slug($("framework").value)}_${slug(currentTopic)}.${ext}`;
+  const mb = (blob.size / 1048576).toFixed(1);
+  reset();
+
+  if (lastUrl) URL.revokeObjectURL(lastUrl);
+  lastUrl = URL.createObjectURL(blob);
+  const last = $("last"); last.src = lastUrl; last.style.display = "block";
+
+  let saved = false;
+  if (dirHandle) {
+    try {
+      const fh = await dirHandle.getFileHandle(name, { create: true });
+      const w = await fh.createWritable(); await w.write(blob); await w.close();
+      saved = true;
+      setStatus(`Sparad: ${name} (${mb} MB)`, "ok");
+    } catch (e) { setStatus("Kunde inte spara i mappen (" + e.name + "). ", "err"); }
+  }
+  if (!saved) {
+    const s = $("status"); if (!dirHandle) setStatus("Ingen mapp vald. ", "");
+    const a = document.createElement("a"); a.href = lastUrl; a.download = name; a.className = "dl";
+    a.textContent = `Ladda ner ${name} (${mb} MB)`;
+    const file = new File([blob], name, { type: type.split(";")[0] });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      setStatus(`Klart: ${name} (${mb} MB). `, "ok");
+      const b = document.createElement("button"); b.textContent = "Spara i Filer / dela"; b.style.marginLeft = "4px";
+      b.onclick = async () => { try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== "AbortError") { s.appendChild(document.createTextNode(" ")); s.appendChild(a); } } };
+      s.appendChild(b);
+    } else s.appendChild(a);
+  }
+  bump(); newTopic();
+}
+
+// ---- Mapp (sparas mellan besök i IndexedDB) ----
+function idb() { return new Promise((res, rej) => { const r = indexedDB.open("ovningsstudio", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbSet(k, v) { try { const db = await idb(); db.transaction("kv", "readwrite").objectStore("kv").put(v, k); } catch {} }
+async function idbGet(k) { try { const db = await idb(); return await new Promise(res => { const r = db.transaction("kv").objectStore("kv").get(k);
+  r.onsuccess = () => res(r.result); r.onerror = () => res(null); }); } catch { return null; } }
+
+async function pickFolder() {
+  if (!window.showDirectoryPicker) { setStatus("Den här webbläsaren kan inte spara direkt i en mapp. Använd Chrome, annars laddas klippen ner.", "err"); return; }
+  try {
+    // Finns en sparad mapp som bara saknar behörighet: fråga om den först.
+    const stored = await idbGet("dir");
+    if (stored && !dirHandle && await stored.requestPermission({ mode: "readwrite" }) === "granted") { useFolder(stored); return; }
+    const h = await window.showDirectoryPicker({ mode: "readwrite" });
+    await idbSet("dir", h); useFolder(h);
+  } catch (e) { if (e.name !== "AbortError") setStatus("Mappen kunde inte väljas: " + e.name, "err"); }
+}
+function useFolder(h) { dirHandle = h; $("folderName").textContent = h.name; $("pick").textContent = "Byt mapp"; }
+async function restoreFolder() {
+  const h = await idbGet("dir"); if (!h) return;
+  try {
+    if (await h.queryPermission({ mode: "readwrite" }) === "granted") useFolder(h);
+    else { $("folderName").textContent = h.name + " (behöver godkännas igen)"; $("pick").textContent = "Godkänn mapp"; }
+  } catch {}
+}
+
+// ---- Start ----
+$("framework").innerHTML = Object.keys(FRAMEWORKS).map(k => `<option>${k}</option>`).join("");
+$("framework").value = FRAMEWORKS[store.get("fw", "1-2-3")] ? store.get("fw", "1-2-3") : "1-2-3";
+$("framework").onchange = renderSteps;
+$("next").onclick = newTopic;
+$("pick").onclick = pickFolder;
+$("rec").onclick = () => {
+  if (state === "idle") { $("prep").checked ? startPrep() : startRec(); }
+  else if (state === "prep") { reset(); setStatus("Avbrutet."); }
+  else stopRec();
+};
+document.addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "SELECT" && e.target.tagName !== "BUTTON") { e.preventDefault(); $("rec").click(); } });
+if (!window.showDirectoryPicker) $("folderRow").innerHTML = "Efter varje klipp: tryck <b>Spara i Filer / dela</b> och välj din iCloud-mapp.";
+renderSteps(); newTopic(); showCount(); restoreFolder(); initCamera();
+</script>
+</body>
+</html>
