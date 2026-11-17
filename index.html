@@ -46,9 +46,16 @@
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
          margin-right: 8px; animation: blink 1s infinite; }
   @keyframes blink { 50% { opacity: .25; } }
-  .bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 12px; overflow: hidden; }
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.15); }
   .bar > div { height: 100%; width: 0; background: var(--accent); }
   .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+  .recrow { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; min-width: 0; }
+  .recrow #rec { padding: 6px 14px; font-size: 14px; flex: none; }
+  .recrow .chk { font-size: 12px; flex: none; white-space: nowrap; }
+  .recrow .status { margin: 0; min-height: 0; font-size: 12px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recrow .count { font-size: 12px; flex: none; margin-left: 0; white-space: nowrap; }
+  #tag { position: absolute; right: 8px; bottom: 8px; max-width: 32%; padding: 3px 7px; border-radius: 5px; background: rgba(0,0,0,.55);
+         font-size: 12px; font-weight: 700; line-height: 1.2; text-align: right; }
   button, select {
     font: inherit; color: var(--text); background: #2a2f38; border: 1px solid var(--line);
     border-radius: 10px; padding: 10px 16px; cursor: pointer;
@@ -58,7 +65,7 @@
   #rec { background: var(--accent); border-color: var(--accent); font-weight: 700; padding: 12px 26px; }
   #rec.stop { background: #2a2f38; border-color: var(--accent); color: var(--accent); }
   label.chk { color: var(--muted); font-size: 14px; display: flex; gap: 6px; align-items: center; }
-  @media (max-width: 820px) { main { padding: 12px; gap: 12px; } .panel { padding: 14px; } .topic { font-size: 30px !important; } }
+  @media (max-width: 820px) { main { padding: 6px; gap: 8px; } .panel { padding: 10px; border-radius: 12px; } .topic { font-size: 26px !important; } h1 { margin-bottom: 8px; } }
   .topic { font-size: 40px; font-weight: 700; line-height: 1.15; margin: 4px 0 18px; width: 100%; text-align: left;
            background: none; border: 0; padding: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
   .topic:hover { background: none; }
@@ -82,21 +89,20 @@
 <body>
 <main>
   <section class="panel">
-    <h1>Inspelning</h1>
     <div class="stage">
       <video id="preview" autoplay muted playsinline></video>
       <div id="countdown"></div>
       <div id="caption"></div>
       <div class="timer" id="timer">0:00 / 1:00</div>
+      <div id="tag"></div>
+      <div class="bar"><div id="progress"></div></div>
     </div>
-    <div class="bar"><div id="progress"></div></div>
-    <div class="controls">
+    <div class="recrow">
       <button id="rec">● Rec</button>
-      <label class="chk"><input type="checkbox" id="prep"> 10 s betänketid</label>
-      <label class="chk" id="ccLabel"><input type="checkbox" id="cc" checked> Spara text</label>
+      <label class="chk"><input type="checkbox" id="prep"> 10 s</label>
+      <span class="status" id="status">Startar kameran…</span>
       <span class="count" id="count"></span>
     </div>
-    <div class="status" id="status">Startar kameran…</div>
   </section>
 
   <section class="panel">
@@ -160,7 +166,7 @@ function fmt(s) { return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).p
 
 function newTopic() {
   let t; do { t = TOPICS[Math.floor(Math.random() * TOPICS.length)]; } while (t === currentTopic);
-  currentTopic = t; $("topic").textContent = t;
+  currentTopic = t; $("topic").textContent = t; $("tag").textContent = t;
 }
 function renderSteps() {
   const f = $("framework").value; store.set("fw", f);
@@ -169,7 +175,7 @@ function renderSteps() {
 function today() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
 function showCount() {
   const c = store.get("counts", {}); const total = Object.values(c).reduce((a, b) => a + b, 0);
-  $("count").textContent = `Idag: ${c[today()] || 0} · Totalt: ${total}`;
+  $("count").textContent = `${c[today()] || 0} idag · ${total} tot`;
 }
 function bump() { const c = store.get("counts", {}); c[today()] = (c[today()] || 0) + 1; store.set("counts", c); showCount(); }
 
@@ -209,7 +215,7 @@ function startPrep() {
 function setCaption(t) { const c = $("caption"); c.textContent = ""; if (t) { const sp = document.createElement("span"); sp.textContent = t; c.appendChild(sp); } }
 function startCaptions() {
   finalText = "";
-  if (!SR || !$("cc").checked) return;
+  return; // Taligenkänningen gav ingen text på iPhone; avstängd.
   try {
     recog = new SR(); recog.lang = "sv-SE"; recog.continuous = true; recog.interimResults = true;
     let base = "";
@@ -224,14 +230,40 @@ function startCaptions() {
   } catch { recog = null; }
 }
 function stopCaptions() { if (recog) { recog.onend = null; try { recog.stop(); } catch {} recog = null; } }
+let canvas, ctx, raf, recTopic;
+function burnStream() {
+  const v = $("preview");
+  if (!v.videoWidth || !HTMLCanvasElement.prototype.captureStream) return null;
+  const A = MOBILE ? 4 / 5 : 16 / 9;                       // samma beskärning som förhandsvisningen
+  let w = Math.min(v.videoWidth, v.videoHeight * A), h = w / A;
+  w = Math.round(w / 2) * 2; h = Math.round(h / 2) * 2;
+  const sx = (v.videoWidth - w) / 2, sy = (v.videoHeight - h) / 2;
+  canvas = canvas || document.createElement("canvas"); canvas.width = w; canvas.height = h;
+  ctx = canvas.getContext("2d");
+  const fs = Math.round(h * 0.04), pad = Math.round(fs * 0.45), m = Math.round(h * 0.03);
+  const draw = () => {
+    ctx.drawImage(v, sx, sy, w, h, 0, 0, w, h);
+    ctx.font = `700 ${fs}px -apple-system, "Helvetica Neue", sans-serif`;
+    let t = recTopic; while (ctx.measureText(t).width > w * 0.6 && t.length > 4) t = t.slice(0, -2) + "…";
+    const tw = ctx.measureText(t).width, bw = tw + pad * 2, bh = fs + pad * 1.4, x = w - m - bw, y = h - m - bh;
+    ctx.fillStyle = "rgba(0,0,0,.55)";
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, bw, bh, pad * 0.7); ctx.fill(); } else ctx.fillRect(x, y, bw, bh);
+    ctx.fillStyle = "#fff"; ctx.textBaseline = "middle"; ctx.fillText(t, x + pad, y + bh / 2 + 1);
+    raf = requestAnimationFrame(draw);
+  };
+  draw();
+  return new MediaStream([...canvas.captureStream(24).getVideoTracks(), ...stream.getAudioTracks()]);
+}
 function startRec() {
   const mime = pickMime();
+  recTopic = currentTopic;
+  const src = burnStream() || stream;
   try {
-    recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: 400000, audioBitsPerSecond: 48000 });
-  } catch (e) { reset(); setStatus("Inspelningen kunde inte startas: " + e.message, "err"); return; }
+    recorder = new MediaRecorder(src, { mimeType: mime || undefined, videoBitsPerSecond: 400000, audioBitsPerSecond: 48000 });
+  } catch (e) { cancelAnimationFrame(raf); reset(); setStatus("Inspelningen kunde inte startas: " + e.message, "err"); return; }
   chunks = [];
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-  recorder.onstop = finish;
+  recorder.onstop = () => { cancelAnimationFrame(raf); if (src !== stream) src.getVideoTracks().forEach(t => t.stop()); finish(); };
   recorder.start(1000);
   state = "rec"; t0 = Date.now();
   $("rec").textContent = "■ Stopp"; $("rec").classList.add("stop");
@@ -260,7 +292,7 @@ async function finish() {
   const blob = new Blob(chunks, { type });
   const ext = type.includes("mp4") ? "mp4" : "webm";
   const d = new Date();
-  const name = `${today()}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}${String(d.getSeconds()).padStart(2,"0")}_${slug($("framework").value)}_${slug(currentTopic)}.${ext}`;
+  const name = `${today()}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}${String(d.getSeconds()).padStart(2,"0")}_${slug($("framework").value)}_${slug(recTopic)}.${ext}`;
   const mb = (blob.size / 1048576).toFixed(1);
   const dur = Math.min(LIMIT, (Date.now() - t0) / 1000);
   let thumb = "";
@@ -273,7 +305,7 @@ async function finish() {
 
   const lastUrl = urls[name] = URL.createObjectURL(blob);
   const clips = store.get("clips", []);
-  clips.unshift({ name, topic: currentTopic, fw: $("framework").value, ts: d.getTime(), dur, mb, thumb, text });
+  clips.unshift({ name, topic: recTopic, fw: $("framework").value, ts: d.getTime(), dur, mb, thumb, text });
   store.set("clips", clips.slice(0, 60)); renderClips();
 
   let saved = false;
@@ -350,9 +382,6 @@ $("framework").value = FRAMEWORKS[store.get("fw", "1-2-3")] ? store.get("fw", "1
 $("framework").onchange = renderSteps;
 $("next").onclick = newTopic;
 $("prep").checked = store.get("prep10", false);
-$("cc").checked = store.get("cc", true);
-$("cc").onchange = () => store.set("cc", $("cc").checked);
-if (!SR) $("ccLabel").style.display = "none";
 $("prep").onchange = () => store.set("prep10", $("prep").checked);
 const topicPanel = $("topicBtn").closest(".panel");
 function setCollapsed(c) { topicPanel.classList.toggle("collapsed", c); $("topicBtn").setAttribute("aria-expanded", String(!c)); store.set("collapsed", c); }
